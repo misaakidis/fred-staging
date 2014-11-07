@@ -253,14 +253,6 @@ public class BookmarkItem extends Bookmark {
             return false;
         }
     }
-    
-    public boolean hasUpdated() {
-    	return updated;
-    }
-    
-    public void clearUpdated() {
-    	this.updated = false;
-    }
 
     public boolean hasUpdated() {
         return updated;
@@ -273,7 +265,7 @@ public class BookmarkItem extends Bookmark {
     public boolean hasAnActivelink() {
         return hasAnActivelink;
     }
-    
+
     public String getDescription() {
     	if(desc == null) return "";
 		if(desc.toLowerCase().startsWith("l10n:"))
