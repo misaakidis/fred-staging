@@ -25,6 +25,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.Semaphore;
 import java.util.jar.Attributes;
 import java.util.jar.JarException;
 import java.util.jar.JarFile;
@@ -33,9 +34,8 @@ import java.util.zip.ZipException;
 
 import org.tanukisoftware.wrapper.WrapperManager;
 
-import com.db4o.ObjectContainer;
-
 import freenet.client.HighLevelSimpleClient;
+import freenet.clients.fcp.ClientPut;
 import freenet.clients.http.QueueToadlet;
 import freenet.clients.http.PageMaker.THEME;
 import freenet.clients.http.Toadlet;
@@ -51,7 +51,6 @@ import freenet.node.Node;
 import freenet.node.NodeClientCore;
 import freenet.node.RequestClient;
 import freenet.node.RequestStarter;
-import freenet.node.fcp.ClientPut;
 import freenet.node.useralerts.AbstractUserAlert;
 import freenet.node.useralerts.UserAlert;
 import freenet.pluginmanager.OfficialPlugins.OfficialPluginDescription;
@@ -233,21 +232,36 @@ public class PluginManager {
 	private String[] toStart;
 
 	public void start(Config config) {
-		if(toStart != null)
+		if (toStart == null) {
+			synchronized (pluginWrappers) {
+				started = true;
+				return;
+			}
+		}
+
+		final Semaphore startingPlugins = new Semaphore(0);
 			for(final String name : toStart) {
 			    core.getExecutor().execute(new Runnable() {
 
                     @Override
                     public void run() {
                         startPluginAuto(name, false);
+                        startingPlugins.release();
                     }
 			        
 			    });
 			}
+
+		core.getExecutor().execute(new Runnable() {
+			@Override
+			public void run() {
+				startingPlugins.acquireUninterruptibly(toStart.length);
 		synchronized(pluginWrappers) {
 			started = true;
 			toStart = null;
 		}
+			}
+		});
 	}
 
 	public void stop(long maxWaitTime) {
@@ -316,9 +330,7 @@ public class PluginManager {
 			for(PluginInfoWrapper pi : pluginWrappers) {
 				v.add(pi.getFilename());
 			}
-			for(String s : pluginsFailedLoad.keySet()) {
-				v.add(s);
-			}
+			v.addAll(pluginsFailedLoad.keySet());
 		}
 
 		return v.toArray(new String[v.size()]);
@@ -871,13 +883,44 @@ public class PluginManager {
 	 * look for PluginInfo for a Plugin with given classname
 	 * @param plugname
 	 * @return the PluginInfo or null if not found
+	 * @deprecated As opposed to its JavaDoc, this function will also return plugins with a matching filename, no only class name.
+	 *             To fix this ambiguity, instead use either {@link #getPluginInfoByClassName(String)} or {@link #getPluginInfoByFileName(String)}.
 	 */
+	@Deprecated
 	public PluginInfoWrapper getPluginInfo(String plugname) {
 		synchronized(pluginWrappers) {
 			for(int i = 0; i < pluginWrappers.size(); i++) {
 				PluginInfoWrapper pi = pluginWrappers.get(i);
 				if(pi.getPluginClassName().equals(plugname) || pi.getFilename().equals(plugname))
 					return pi;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * @param pluginClassName The name of the main class of the plugin - that is the class which implements {@link FredPlugin}.
+	 * @return The plugin with the given class, or null if no matching plugin was found.
+	 */
+	public PluginInfoWrapper getPluginInfoByClassName(String pluginClassName) {
+		synchronized(pluginWrappers) {
+			for(PluginInfoWrapper piw : pluginWrappers) {
+				if(piw.getPluginClassName().equals(pluginClassName))
+					return piw;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * @param pluginFileName The filename of the JAR from which the plugin was loaded.
+	 * @return Null if no matching plugin was found.
+	 */
+	public PluginInfoWrapper getPluginInfoByFileName(String pluginFileName) {
+		synchronized(pluginWrappers) {
+			for(PluginInfoWrapper piw : pluginWrappers) {
+				if(piw.getFilename().equals(pluginFileName))
+					return piw;
 			}
 		}
 		return null;
@@ -1078,11 +1121,6 @@ public class PluginManager {
 		@Override
 		public boolean persistent() {
 			return false;
-		}
-
-		@Override
-		public void removeFrom(ObjectContainer container) {
-			// Do nothing.
 		}
 
 		@Override
